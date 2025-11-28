@@ -6,6 +6,10 @@
 
 #include "configuration.h"
 
+#if HAS_RADIO
+#include "RadioLibInterface.h"
+#endif
+
 #if defined(ARCH_NRF52)
 #include <Adafruit_nRFCrypto.h>
 extern Adafruit_nRFCrypto nRFCrypto;
@@ -22,20 +26,68 @@ extern Adafruit_nRFCrypto nRFCrypto;
 namespace HardwareRNG
 {
 
+namespace
+{
+void fillWithRandomDevice(uint8_t *buffer, size_t length)
+{
+    std::random_device rd;
+    size_t offset = 0;
+    while (offset < length) {
+        uint32_t value = rd();
+        size_t toCopy = std::min(length - offset, sizeof(value));
+        memcpy(buffer + offset, &value, toCopy);
+        offset += toCopy;
+    }
+}
+
+#if HAS_RADIO
+bool mixWithLoRaEntropy(uint8_t *buffer, size_t length)
+{
+    if (!RadioLibInterface::instance) {
+        return false;
+    }
+
+    constexpr size_t chunkSize = 16;
+    uint8_t scratch[chunkSize];
+    size_t offset = 0;
+    bool mixed = false;
+
+    while (offset < length) {
+        size_t toCopy = std::min(length - offset, chunkSize);
+
+        if (!RadioLibInterface::instance->randomBytes(scratch, toCopy)) {
+            break;
+        }
+
+        for (size_t i = 0; i < toCopy; ++i) {
+            buffer[offset + i] ^= scratch[i];
+        }
+
+        mixed = true;
+        offset += toCopy;
+    }
+
+    return mixed;
+}
+#endif
+} // namespace
+
 bool fill(uint8_t *buffer, size_t length)
 {
     if (!buffer || length == 0) {
         return false;
     }
 
+    bool filled = false;
+
 #if defined(ARCH_NRF52)
     nRFCrypto.begin();
     auto result = nRFCrypto.Random.generate(buffer, length);
     nRFCrypto.end();
-    return result;
+    filled = result;
 #elif defined(ARCH_ESP32)
     esp_fill_random(buffer, length);
-    return true;
+    filled = true;
 #elif defined(ARCH_RP2040)
     size_t offset = 0;
     while (offset < length) {
@@ -44,33 +96,34 @@ bool fill(uint8_t *buffer, size_t length)
         memcpy(buffer + offset, &value, toCopy);
         offset += toCopy;
     }
-    return true;
+    filled = true;
 #elif defined(ARCH_PORTDUINO)
     ssize_t generated = ::getrandom(buffer, length, 0);
     if (generated == static_cast<ssize_t>(length)) {
-        return true;
+        filled = true;
     }
 
-    std::random_device rd;
-    size_t offset = 0;
-    while (offset < length) {
-        uint32_t value = rd();
-        size_t toCopy = std::min(length - offset, sizeof(value));
-        memcpy(buffer + offset, &value, toCopy);
-        offset += toCopy;
+    if (!filled) {
+        fillWithRandomDevice(buffer, length);
+        filled = true;
     }
-    return true;
 #else
-    std::random_device rd;
-    size_t offset = 0;
-    while (offset < length) {
-        uint32_t value = rd();
-        size_t toCopy = std::min(length - offset, sizeof(value));
-        memcpy(buffer + offset, &value, toCopy);
-        offset += toCopy;
-    }
-    return true;
+    fillWithRandomDevice(buffer, length);
+    filled = true;
 #endif
+
+    if (!filled) {
+        fillWithRandomDevice(buffer, length);
+        filled = true;
+    }
+
+#if HAS_RADIO
+    if (mixWithLoRaEntropy(buffer, length)) {
+        filled = true;
+    }
+#endif
+
+    return filled;
 }
 
 bool seed(uint32_t &seedOut)
