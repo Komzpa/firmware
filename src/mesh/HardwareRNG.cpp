@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <random>
 
 #include "configuration.h"
 
@@ -60,15 +61,26 @@ bool fill(uint8_t *buffer, size_t length)
     }
     return true;
 #else
+    std::random_device rd;
     size_t offset = 0;
     while (offset < length) {
-        uint32_t value = random();
+        uint32_t value = rd();
         size_t toCopy = std::min(length - offset, sizeof(value));
         memcpy(buffer + offset, &value, toCopy);
         offset += toCopy;
     }
     return true;
 #endif
+}
+
+bool seed(uint32_t &seedOut)
+{
+    uint32_t candidate = 0;
+    if (!fill(reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate))) {
+        return false;
+    }
+    seedOut = candidate;
+    return true;
 }
 
 } // namespace HardwareRNG

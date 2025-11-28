@@ -16,4 +16,12 @@ namespace HardwareRNG
  */
 bool fill(uint8_t *buffer, size_t length);
 
+/**
+ * Populate a 32-bit seed value with hardware-backed randomness where possible.
+ *
+ * @param seedOut Destination for the generated seed value
+ * @return true if a seed was produced from a reliable entropy source
+ */
+bool seed(uint32_t &seedOut);
+
 } // namespace HardwareRNG
